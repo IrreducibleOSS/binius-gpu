@@ -43,7 +43,7 @@ public:
   }
 
   template <uint32_t BLOCKS, uint32_t THREADS_PER_BLOCK>
-  void this_round_messages(std::array<QM31, 3> &points_span) {
+  void first_round_messages(std::array<QM31, 3> &points_span) {
     QM31 *points = points_span.data();
 
     uint64_t sum_zero[4] = {0, 0, 0, 0};
@@ -85,13 +85,42 @@ public:
   };
 
   template <uint32_t BLOCKS, uint32_t THREADS_PER_BLOCK>
-  void fold(QM31 challenge) {
-    fold_list_halves<<<BLOCKS, THREADS_PER_BLOCK>>>(
-        gpu_multilinear_evaluations, challenge,
-        EVALS_PER_MULTILINEAR >> round, EVALS_PER_MULTILINEAR);
+  void subsequent_round_messages(std::array<QM31, 3> &points_span, QM31 challenge) {
+    QM31 *points = points_span.data();
+
+    uint64_t sum_zero[4] = {0, 0, 0, 0};
+    uint64_t sum_one[4] = {0, 0, 0, 0};
+    uint64_t sum_two[4] = {0, 0, 0, 0};
+
+    uint64_t *sum_zero_device;
+    uint64_t *sum_one_device;
+    uint64_t *sum_two_device;
+
+    cudaMalloc(&sum_zero_device, sizeof(uint64_t) * 4);
+    cudaMemset(sum_zero_device, 0, sizeof(uint64_t) * 4);
+    cudaMalloc(&sum_one_device, sizeof(uint64_t) * 4);
+    cudaMemset(sum_one_device, 0, sizeof(uint64_t) * 4);
+    cudaMalloc(&sum_two_device, sizeof(uint64_t) * 4);
+    cudaMemset(sum_two_device, 0, sizeof(uint64_t) * 4);
+
+    fold_then_get_coeffs<<<BLOCKS, THREADS_PER_BLOCK>>>(
+        gpu_multilinear_evaluations, challenge, sum_zero_device, sum_one_device, sum_two_device, EVALS_PER_MULTILINEAR >> round, EVALS_PER_MULTILINEAR);
+
+    cudaMemcpy(sum_zero, sum_zero_device, sizeof(uint64_t) * 4,
+               cudaMemcpyDeviceToHost);
+    cudaMemcpy(sum_one, sum_one_device, sizeof(uint64_t) * 4,
+               cudaMemcpyDeviceToHost);
+    cudaMemcpy(sum_two, sum_two_device, sizeof(uint64_t) * 4,
+               cudaMemcpyDeviceToHost);
 
     cudaDeviceSynchronize();
 
-    ++round;
+    points_span[0] = QM31(sum_zero);
+    points_span[1] = QM31(sum_one);
+    points_span[2] = QM31(sum_two);
+
+    cudaFree(sum_zero_device);
+    cudaFree(sum_one_device);
+    cudaFree(sum_two_device);
   };
 };
