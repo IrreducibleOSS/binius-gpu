@@ -5,13 +5,6 @@
 #include <iostream>
 #include <vector>
 
-template <int I, int N> void do_unrolled_loop() {
-  if constexpr (I < N) {
-    // Use I as constexpr index
-
-    do_unrolled_loop<I + 1, N>();
-  }
-}
 
 int main() {
 

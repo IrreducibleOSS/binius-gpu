@@ -106,6 +106,8 @@ public:
     fold_then_get_coeffs<<<BLOCKS, THREADS_PER_BLOCK>>>(
         gpu_multilinear_evaluations, challenge, sum_zero_device, sum_one_device, sum_two_device, EVALS_PER_MULTILINEAR >> round, EVALS_PER_MULTILINEAR);
 
+    cudaDeviceSynchronize();
+
     cudaMemcpy(sum_zero, sum_zero_device, sizeof(uint64_t) * 4,
                cudaMemcpyDeviceToHost);
     cudaMemcpy(sum_one, sum_one_device, sizeof(uint64_t) * 4,
