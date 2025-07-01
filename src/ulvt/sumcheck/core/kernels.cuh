@@ -50,14 +50,27 @@ __global__ void compute_compositions(
 					BITS_WIDTH * (batches_fitting_into_original_column * column_idx + row_idx);
 				const uint32_t* upper_batch = lower_batch + BITS_WIDTH * num_batch_rows_to_fold;
 
+                uint32_t xor_chunks[128];            // holds 32×4 planes
+                uint32_t pre_computes_A[32*PRE_COMPUTES_HEIGHT_2_SIZE];           // holds 32×PRE_COMPUTES_HEIGHT_2_SIZE planes
+
+                for (int off = 0, pre_comp_offset = 0; off < 128; off += 4, pre_comp_offset += PRE_COMPUTES_HEIGHT_2_SIZE) {
+                    /* xor once */
+                    xor_chunks[off+0] = lower_batch[off+0] ^ upper_batch[off+0];
+                    xor_chunks[off+1] = lower_batch[off+1] ^ upper_batch[off+1];
+                    xor_chunks[off+2] = lower_batch[off+2] ^ upper_batch[off+2];
+                    xor_chunks[off+3] = lower_batch[off+3] ^ upper_batch[off+3];
+
+                    /* pre-compute A terms once */
+                    precompute_param_height_2(&xor_chunks[off], &pre_computes_A[pre_comp_offset]);
+                }
+
 				for (int interpolation_point = 0; interpolation_point < INTERPOLATION_POINTS; ++interpolation_point) {
-					fold_batch(
+					fold_batch_interpolation(
 						lower_batch,
-						upper_batch,
+						xor_chunks,
+						pre_computes_A,
 						folded_batch_row + BITS_WIDTH * (column_idx * INTERPOLATION_POINTS + interpolation_point),
-						coefficients + BITS_WIDTH * interpolation_point,
-						true
-					);
+						coefficients + BITS_WIDTH * interpolation_point);
 				}
 			}
 
