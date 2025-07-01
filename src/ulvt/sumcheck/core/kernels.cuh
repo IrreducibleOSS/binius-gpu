@@ -50,7 +50,7 @@ __global__ void compute_compositions(
 					BITS_WIDTH * (batches_fitting_into_original_column * column_idx + row_idx);
 				const uint32_t* upper_batch = lower_batch + BITS_WIDTH * num_batch_rows_to_fold;
 
-                uint32_t xor_chunks[128];            // holds 32×4 planes
+                uint32_t xor_chunks[BITS_WIDTH];            // holds 32×4 planes
                 uint32_t pre_computes_A[32*PRE_COMPUTES_HEIGHT_2_SIZE];           // holds 32×PRE_COMPUTES_HEIGHT_2_SIZE planes
 
                 for (int off = 0, pre_comp_offset = 0; off < 128; off += 4, pre_comp_offset += PRE_COMPUTES_HEIGHT_2_SIZE) {
