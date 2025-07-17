@@ -6,6 +6,44 @@
 #include "core/core.cuh"
 #include "core/kernels.cuh"
 #include "utils/constants.hpp"
+#include "test/utils/unbitsliced_mul.cuh"
+
+
+static inline void transpose4x4( const uint8_t cols[4], uint8_t rows[4] )
+{
+  for ( int i = 0; i < 4; ++i )
+  {
+    uint8_t lo = 0;
+    for ( int j = 0; j < 4; ++j )
+    {
+      uint8_t b = (cols[j] >> i) & 1;
+      lo |= b << j;
+    }
+    rows[i] = lo;
+  }
+}
+
+void build_matrix_tower_height_2( uint8_t C, uint8_t rows[4] )
+{
+	uint8_t cols[4] = {0, 0, 0, 0};
+    for ( int j = 0; j < 4; ++j )
+    {
+        uint8_t E;
+        if ( j < 4 )
+        {
+            E = (uint8_t)1 << j;	
+        }
+
+       cols[j] = FanPaarTowerField<2>::multiply( C, E );
+    }
+
+	transpose4x4( cols, rows );
+}
+
+
+
+
+
 
 template <uint32_t NUM_VARS, uint32_t COMPOSITION_SIZE, bool DATA_IS_TRANSPOSED>
 class Sumcheck {
@@ -100,10 +138,15 @@ public:
 			cudaDeviceSynchronize();
 		}
 
+		uint8_t matrix_rows [INTERPOLATION_POINTS][4] = {0};
+
 		for (int interpolation_point = 0; interpolation_point < INTERPOLATION_POINTS; ++interpolation_point) {
 			uint32_t coefficient_as_value[INTS_PER_VALUE];
 
 			coefficient_as_value[0] = interpolation_point;
+			build_matrix_tower_height_2(
+				interpolation_point, matrix_rows[interpolation_point]
+			);  // Fill in the rest of the coefficients
 
 			for (int i = 1; i < INTS_PER_VALUE; ++i) {
 				coefficient_as_value[i] = 0;
@@ -113,6 +156,8 @@ public:
 				coefficients + interpolation_point * BITS_WIDTH, coefficient_as_value
 			);
 		}
+
+		cudaMemcpyToSymbol( device_matrix_rows_height_2, matrix_rows, sizeof(matrix_rows) );
 
 		cudaMalloc(&gpu_coefficients, BITS_WIDTH * INTERPOLATION_POINTS * sizeof(uint32_t));
 

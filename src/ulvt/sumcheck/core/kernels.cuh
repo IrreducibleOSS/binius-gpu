@@ -22,6 +22,7 @@ __global__ void compute_compositions(
 
 	memset(multilinear_products_sums_this_thread, 0, BITS_WIDTH * sizeof(uint32_t));
 
+
 	for (uint32_t row_idx = tid; row_idx < num_batch_rows; row_idx += gridDim.x * blockDim.x) {
 		uint32_t this_multilinear_product[BITS_WIDTH];
 
@@ -50,13 +51,27 @@ __global__ void compute_compositions(
 					BITS_WIDTH * (batches_fitting_into_original_column * column_idx + row_idx);
 				const uint32_t* upper_batch = lower_batch + BITS_WIDTH * num_batch_rows_to_fold;
 
+			     uint32_t xor_chunks[128];            // holds 32×4 planes
+                //  uint32_t pre_computes_look_ups[32][16]; // definitelly memory spilling and probably making it slower, but this sort of caching could be utilized in the CPU setting.
+
+                 #pragma unroll
+				 for (int off = 0; off < 128; off += 4) {
+                     /* xor once */
+                     xor_chunks[off+0] = lower_batch[off+0] ^ upper_batch[off+0];
+                     xor_chunks[off+1] = lower_batch[off+1] ^ upper_batch[off+1];
+                     xor_chunks[off+2] = lower_batch[off+2] ^ upper_batch[off+2];
+                     xor_chunks[off+3] = lower_batch[off+3] ^ upper_batch[off+3];
+
+					//  pre_calculate_lookup_table_4bit(&xor_chunks[off], pre_computes_look_ups[off / 4]);
+                 }
+
 				for (int interpolation_point = 0; interpolation_point < INTERPOLATION_POINTS; ++interpolation_point) {
-					fold_batch(
+					fold_batch_interpolated_height_2_via_precomputes(
 						lower_batch,
-						upper_batch,
+						xor_chunks,
+						// pre_computes_look_ups,
 						folded_batch_row + BITS_WIDTH * (column_idx * INTERPOLATION_POINTS + interpolation_point),
-						coefficients + BITS_WIDTH * interpolation_point,
-						true
+						interpolation_point
 					);
 				}
 			}
