@@ -52,6 +52,7 @@ file(GLOB sumcheck_core_headers "./src/ulvt/sumcheck/core/*.cuh")
 file(GLOB bitslicing_srcs "./src/ulvt/utils/bitslicing.cu")
 file(GLOB bitslicing_headers "./src/ulvt/utils/bitslicing.cuh")
 
+
 add_library(sumcheck STATIC 
 ${sumcheck_utils_headers_cpp}
 ${sumcheck_utils_headers}
@@ -60,6 +61,9 @@ ${sumcheck_core_srcs}
 ${sumcheck_core_headers}
 ${bitslicing_srcs}
 ${bitslicing_headers}
+${tower_mul_unbitsliced}
+${sumcheck_test_utils_srcs}
+${sumcheck_test_utils_headers}
 )
 
 add_library(prime_field_sumcheck STATIC 
@@ -129,8 +133,8 @@ set_target_properties(finite_field_tests PROPERTIES
 add_executable(sumcheck_test ${sumcheck_test_src}
 ${sumcheck_test_kernel_srcs}
 ${sumcheck_test_kernel_headers}
-${sumcheck_test_utils_srcs}
-${sumcheck_test_utils_headers}
+# ${sumcheck_test_utils_srcs}
+# ${sumcheck_test_utils_headers}
 ${sumcheck_test_verifier_src}
 ${sumcheck_test_verifier_header}
 )

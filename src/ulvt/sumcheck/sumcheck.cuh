@@ -7,6 +7,49 @@
 #include "core/kernels.cuh"
 #include "utils/constants.hpp"
 #include "test/utils/unbitsliced_mul.cuh"
+#include "test/utils/tower_7_mul.cuh"
+#include "test/utils/bigints.cuh"
+inline __uint128_t pack128( const std::array<uint32_t, INTS_PER_VALUE> &a )
+{
+    //   a[0] → bits  0…31
+    //   a[1] → bits 32…63
+    //   a[2] → bits 64…95
+    //   a[3] → bits 96…127
+    __uint128_t x = static_cast<__uint128_t>(a[0]);
+    x |= static_cast<__uint128_t>(a[1]) << 32;
+    x |= static_cast<__uint128_t>(a[2]) << 64;
+    x |= static_cast<__uint128_t>(a[3]) << 96;
+    return x;
+}
+
+static inline void transpose128( const __uint128_t cols[128],
+                                 __uint128_t       rows[128] )
+{
+    for ( int i = 0; i < 128; ++i )
+    {
+        __uint128_t r = 0;
+        // for each column j, extract bit i and scatter into bit j of r
+        for ( int j = 0; j < 128; ++j )
+        {
+            if ( ((cols[j] >> i) & 1) )
+                r |= (__uint128_t)1 << j;
+        }
+        rows[i] = r;
+    }
+}
+
+
+static inline void build_matrix128( __uint128_t C, __uint128_t rows[128] )
+{
+	__uint128_t cols[128] = {0};
+    for ( int j = 0; j < 128; ++j )
+    {
+        __uint128_t E = ( (__uint128_t)1 ) << j;
+        cols[j]     =  tower_height_7_mul(C, E);
+    }
+	transpose128( cols, rows );
+
+}
 
 
 static inline void transpose4x4( const uint8_t cols[4], uint8_t rows[4] )
@@ -299,6 +342,10 @@ public:
 		uint32_t num_eval_points_per_multilinear = EVALS_PER_MULTILINEAR >> round;
 
 		BitsliceUtils<BITS_WIDTH>::repeat_value_bitsliced(coefficient, challenge);
+
+		__uint128_t matrix_rows[128];
+		build_matrix128(to_bigint((uint32_t*)challenge), matrix_rows);
+		cudaMemcpyToSymbol(device_matrix_rows_height_7, matrix_rows, sizeof(matrix_rows));
 
 		// Load the folded columns
 		if (num_eval_points_per_multilinear <= 32) {
