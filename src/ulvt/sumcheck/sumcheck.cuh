@@ -9,18 +9,6 @@
 #include "test/utils/unbitsliced_mul.cuh"
 #include "test/utils/tower_7_mul.cuh"
 #include "test/utils/bigints.cuh"
-inline __uint128_t pack128( const std::array<uint32_t, INTS_PER_VALUE> &a )
-{
-    //   a[0] → bits  0…31
-    //   a[1] → bits 32…63
-    //   a[2] → bits 64…95
-    //   a[3] → bits 96…127
-    __uint128_t x = static_cast<__uint128_t>(a[0]);
-    x |= static_cast<__uint128_t>(a[1]) << 32;
-    x |= static_cast<__uint128_t>(a[2]) << 64;
-    x |= static_cast<__uint128_t>(a[3]) << 96;
-    return x;
-}
 
 static inline void transpose128( const __uint128_t cols[128],
                                  __uint128_t       rows[128] )
@@ -82,11 +70,6 @@ void build_matrix_tower_height_2( uint8_t C, uint8_t rows[4] )
 
 	transpose4x4( cols, rows );
 }
-
-
-
-
-
 
 template <uint32_t NUM_VARS, uint32_t COMPOSITION_SIZE, bool DATA_IS_TRANSPOSED>
 class Sumcheck {

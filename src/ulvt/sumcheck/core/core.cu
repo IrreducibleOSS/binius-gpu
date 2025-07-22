@@ -75,11 +75,6 @@ __device__ void fold_batch_interpolated_height_2_via_precomputes(
 	uint32_t dst_batch[BITS_WIDTH],
 	const uint32_t interpolation_point
 ) {
-	// uint32_t xor_of_halves[BITS_WIDTH];
-
-	// for (int i = 0; i < BITS_WIDTH; ++i) {
-	// 	xor_of_halves[i] = lower_batch[i] ^ upper_batch[i];
-	// }
 
 	uint32_t product[BITS_WIDTH];
 	memset(product, 0, BITS_WIDTH * sizeof(uint32_t));
