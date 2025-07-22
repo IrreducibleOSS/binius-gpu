@@ -7,7 +7,6 @@ __global__ void compute_compositions(
 	const uint32_t* multilinear_evaluations,
 	uint32_t* multilinear_products_sums,
 	uint32_t* folded_products_sums,
-	const uint32_t coefficients[INTERPOLATION_POINTS * BITS_WIDTH],
 	const uint32_t num_batch_rows,
 	const uint32_t active_threads,
 	const uint32_t active_threads_folded
@@ -119,7 +118,7 @@ __global__ void compute_compositions(
 __global__ void fold_large_list_halves(
 	uint32_t* source,
 	uint32_t* destination,
-	uint32_t coefficient[BITS_WIDTH],
+	uint32_t coefficient_constant_mul_map[BITS_WIDTH][INTS_PER_VALUE],
 	const uint32_t num_batch_rows,
 	const uint32_t src_evals_per_column,
 	const uint32_t dst_evals_per_column,

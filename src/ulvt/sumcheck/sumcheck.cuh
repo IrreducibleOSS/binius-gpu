@@ -101,18 +101,17 @@ private:
 	static constexpr uint32_t EVALS_PER_MULTILINEAR = 1 << NUM_VARS;
 
 	static constexpr size_t TOTAL_INTS = INTS_PER_VALUE * EVALS_PER_MULTILINEAR * COMPOSITION_SIZE;
-	uint32_t coefficients[BITS_WIDTH * INTERPOLATION_POINTS];
 
 	uint32_t round = 0;
 
 	uint32_t *cpu_multilinear_evaluations, *gpu_multilinear_evaluations;
 
-	uint32_t *gpu_coefficients;
+	uint32_t mul_by_constant_matrix_height_7[INTERPOLATION_POINTS][ BITS_WIDTH ][ INTS_PER_VALUE];
 
 	void fold_list_halves(
 		uint32_t *source,
 		uint32_t *destination,
-		uint32_t *coefficient,
+		const uint32_t coefficient_constant_mul_map[BITS_WIDTH][INTS_PER_VALUE],
 		const size_t list_len,
 		const uint32_t src_original_evals_per_column,
 		const uint32_t dst_original_evals_per_column,
@@ -123,16 +122,16 @@ private:
 		if (batches_in_half_list > 0) {
 			// For lists of size >32 elements, fold in half with folding factor
 			// Assume source lives on the GPU
-			uint32_t *gpu_coefficient;
+			uint32_t *gpu_coefficient_constant_mul_map;
 
-			cudaMalloc(&gpu_coefficient, sizeof(uint32_t) * BITS_WIDTH);
+			cudaMalloc(&gpu_coefficient_constant_mul_map, sizeof(uint32_t) * BITS_WIDTH * INTS_PER_VALUE);
 
-			cudaMemcpy(gpu_coefficient, coefficient, sizeof(uint32_t) * BITS_WIDTH, cudaMemcpyHostToDevice);
+			cudaMemcpy(gpu_coefficient_constant_mul_map, coefficient_constant_mul_map, sizeof(uint32_t) * BITS_WIDTH * INTS_PER_VALUE, cudaMemcpyHostToDevice);
 
 			fold_large_list_halves<<<BLOCKS, THREADS_PER_BLOCK>>>(
 				source,
 				destination,
-				gpu_coefficient,
+				(uint32_t (*)[4])gpu_coefficient_constant_mul_map,
 				batches_in_half_list,
 				src_original_evals_per_column,
 				dst_original_evals_per_column,
@@ -140,6 +139,7 @@ private:
 			);
 
 			cudaDeviceSynchronize();
+			cudaFree(gpu_coefficient_constant_mul_map);
 		} else {
 			for (uint32_t col_idx = 0; col_idx < num_cols; ++col_idx) {
 				// For small lists, copy over the later half into top of new batch, multiply by r, and add
@@ -148,7 +148,7 @@ private:
 				uint32_t *this_col_src = source + BITS_WIDTH * col_idx;
 				uint32_t *this_col_dst = destination + BITS_WIDTH * col_idx;
 
-				fold_small(this_col_src, this_col_dst, coefficient, list_len);
+				fold_small(this_col_src, this_col_dst, coefficient_constant_mul_map, list_len);
 			}
 		}
 	}
@@ -187,26 +187,23 @@ public:
 			uint32_t coefficient_as_value[INTS_PER_VALUE];
 
 			coefficient_as_value[0] = interpolation_point;
+
+			// build mul by cinstant matrix when the interpolation point are interpreted as 4 bit values
 			build_matrix_tower_height_2(
 				interpolation_point, matrix_rows[interpolation_point]
-			);  // Fill in the rest of the coefficients
+			);  
+
 
 			for (int i = 1; i < INTS_PER_VALUE; ++i) {
 				coefficient_as_value[i] = 0;
 			}
 
-			BitsliceUtils<BITS_WIDTH>::repeat_value_bitsliced(
-				coefficients + interpolation_point * BITS_WIDTH, coefficient_as_value
-			);
+			// build the mul by constant matrix when the interpolation point are interpreted as 128 bit values as opposed to 4 bit values above
+			build_matrix128(to_bigint((uint32_t*)coefficient_as_value), (__uint128_t*)(mul_by_constant_matrix_height_7[interpolation_point]));
+
 		}
 
 		cudaMemcpyToSymbol( device_matrix_rows_height_2, matrix_rows, sizeof(matrix_rows) );
-
-		cudaMalloc(&gpu_coefficients, BITS_WIDTH * INTERPOLATION_POINTS * sizeof(uint32_t));
-
-		cudaMemcpy(
-			gpu_coefficients, coefficients, BITS_WIDTH * INTERPOLATION_POINTS * sizeof(uint32_t), cudaMemcpyHostToDevice
-		);
 
 		if (benchmarking) {
 			start_raw = std::chrono::high_resolution_clock::now();
@@ -259,7 +256,7 @@ public:
 				fold_list_halves(
 					cpu_multilinear_evaluations,
 					folded_at_point,
-					coefficients + BITS_WIDTH * interpolation_point,
+					(const uint32_t (*)[INTS_PER_VALUE])mul_by_constant_matrix_height_7[interpolation_point],
 					num_eval_points_per_multilinear_unpadded,
 					32,
 					32,
@@ -295,7 +292,6 @@ public:
 					gpu_multilinear_evaluations,
 					gpu_multilinear_products,
 					gpu_folded_products_sums,
-					gpu_coefficients,
 					num_batches_per_multilinear,
 					active_threads,
 					active_threads_folded
@@ -336,23 +332,19 @@ public:
 	void move_to_next_round(const std::array<uint32_t, INTS_PER_VALUE> &challenge_span) {
 		const uint32_t *challenge = challenge_span.data();
 
-		// Take a_i(x_i,...,x_n) and create a_(i+1)(x_(i+1),...,x_n) = a_i(challenge,x_(i+1),...,x_n)
-		uint32_t coefficient[BITS_WIDTH];
 
 		uint32_t num_eval_points_per_multilinear = EVALS_PER_MULTILINEAR >> round;
 
-		BitsliceUtils<BITS_WIDTH>::repeat_value_bitsliced(coefficient, challenge);
 
-		__uint128_t matrix_rows[128];
-		build_matrix128(to_bigint((uint32_t*)challenge), matrix_rows);
-		cudaMemcpyToSymbol(device_matrix_rows_height_7, matrix_rows, sizeof(matrix_rows));
+		__uint128_t chl_mul_by_constant_matrix_height_7[128];
+		build_matrix128(to_bigint((uint32_t*)challenge), chl_mul_by_constant_matrix_height_7);
 
 		// Load the folded columns
 		if (num_eval_points_per_multilinear <= 32) {
 			fold_list_halves(
 				cpu_multilinear_evaluations,
 				cpu_multilinear_evaluations,
-				coefficient,
+				(const uint32_t (*)[INTS_PER_VALUE])chl_mul_by_constant_matrix_height_7,
 				num_eval_points_per_multilinear,
 				32,
 				32,
@@ -362,7 +354,7 @@ public:
 			fold_list_halves(
 				gpu_multilinear_evaluations,
 				gpu_multilinear_evaluations,
-				coefficient,
+				(const uint32_t (*)[INTS_PER_VALUE])chl_mul_by_constant_matrix_height_7,
 				num_eval_points_per_multilinear,
 				EVALS_PER_MULTILINEAR,
 				EVALS_PER_MULTILINEAR,

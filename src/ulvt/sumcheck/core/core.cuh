@@ -7,7 +7,7 @@
 
 
 extern __constant__ uint8_t  device_matrix_rows_height_2[MAX_INTERPOLATING_POINTS][4];
-extern __constant__ uint32_t device_matrix_rows_height_7[128][4];
+// extern __constant__ uint32_t device_matrix_rows_height_7[128][4];
 
 __host__ __device__ void evaluate_composition_on_batch_row(
 	const uint32_t* first_batch_of_row,
@@ -20,13 +20,13 @@ __host__ __device__ void fold_batch(
 	const uint32_t lower_batch[BITS_WIDTH],
 	const uint32_t upper_batch[BITS_WIDTH],
 	uint32_t dst_batch[BITS_WIDTH],
-	const uint32_t coefficient[BITS_WIDTH]
+	const uint32_t coefficient_constant_mul_map[BITS_WIDTH][INTS_PER_VALUE]
 );
 
 void fold_small(
 	const uint32_t source[BITS_WIDTH],
 	uint32_t destination[BITS_WIDTH],
-	const uint32_t coefficient[BITS_WIDTH],
+	const uint32_t coefficient_constant_mul_map[BITS_WIDTH][INTS_PER_VALUE],
 	const uint32_t list_len
 );
 

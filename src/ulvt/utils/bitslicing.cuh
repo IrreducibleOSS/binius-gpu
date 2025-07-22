@@ -66,11 +66,17 @@ public:
 	static void repeat_value_bitsliced(
 		uint32_t batch[BITSLICING_BITS_WIDTH], const uint32_t value[INTS_PER_UNBITSLICED_VALUE]
 	) {
-		for (int i = 0; i < BITSLICING_BITS_WIDTH; ++i) {
-			batch[i] = value[i % INTS_PER_UNBITSLICED_VALUE];
-		}
-
-		bitslice_transpose(batch);
+		// when exactl the same data is repeated bitsliced then the entire row/word either becomes 0 or 0xFFFFFFFF
+ 		for (size_t word = 0; word < INTS_PER_UNBITSLICED_VALUE; ++word) {
+ 			uint32_t v = value[word];
+ 			size_t base = word * 32; //32 being the sizeif int here
+ 			for (size_t bit = 0; bit < 32; ++bit) {
+ 				// Extract the bit (0 or 1), then negate it:
+ 				//   -(0) == 0x00000000
+ 				//   -(1) == 0xFFFFFFFF
+ 				batch[base + bit] = -((v >> bit) & 1U);
+ 			}
+ 		}
 	}
 
 	__host__ __device__ void bitslice_transpose() { bitslice_transpose(buffer.data()); }
@@ -78,11 +84,17 @@ public:
 	__host__ __device__ void bitslice_untranspose() { bitslice_transpose(buffer.data()); }
 
 	__host__ __device__ void repeat_value_bitsliced(const std::array<uint32_t, INTS_PER_UNBITSLICED_VALUE>& value) {
-		for (int i = 0; i < BITSLICING_BITS_WIDTH; ++i) {
-			buffer[i] = value[i % INTS_PER_UNBITSLICED_VALUE];
-		}
-
-		bitslice_transpose();
+		// when exactl the same data is repeated bitsliced then the entire row/word either becomes 0 or 0xFFFFFFFF
+ 		for (size_t word = 0; word < INTS_PER_UNBITSLICED_VALUE; ++word) {
+ 			uint32_t v = value[word];
+ 			size_t base = word * 32; //32 being the sizeif int here
+ 			for (size_t bit = 0; bit < 32; ++bit) {
+ 				// Extract the bit (0 or 1), then negate it:
+ 				//   -(0) == 0x00000000
+ 				//   -(1) == 0xFFFFFFFF
+ 				buffer[base + bit] = -((v >> bit) & 1U);
+ 			}
+ 		}
 	}
 };
 
