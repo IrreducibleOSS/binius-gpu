@@ -9,7 +9,7 @@
 __global__ void fold_large_list_halves(
 	uint32_t* source,
 	uint32_t* destination,
-	uint32_t coefficient[BITS_WIDTH],
+	uint32_t coefficient_constant_mul_map[BITS_WIDTH][INTS_PER_VALUE],
 	const uint32_t num_batch_rows,
 	const uint32_t src_evals_per_column,
 	const uint32_t dst_evals_per_column,
@@ -24,7 +24,7 @@ __global__ void fold_large_list_halves(
 
 			uint32_t* dst_batch = destination + BITS_WIDTH * row_idx + INTS_PER_VALUE * dst_evals_per_column * col_idx;
 
-			fold_batch(lower_batch, upper_batch, dst_batch, coefficient, false);
+			fold_batch(lower_batch, upper_batch, dst_batch, coefficient_constant_mul_map);
 		}
 	}
 }
