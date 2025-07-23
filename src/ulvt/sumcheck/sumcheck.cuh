@@ -10,7 +10,7 @@
 #include "test/utils/tower_7_mul.cuh"
 #include "test/utils/bigints.cuh"
 
-static inline void transpose128( const __uint128_t cols[128],
+static inline void transpose128x128( const __uint128_t cols[128],
                                  __uint128_t       rows[128] )
 {
     for ( int i = 0; i < 128; ++i )
@@ -27,7 +27,7 @@ static inline void transpose128( const __uint128_t cols[128],
 }
 
 
-static inline void build_matrix128( __uint128_t C, __uint128_t rows[128] )
+static inline void build_matrix_tower_height_7( __uint128_t C, __uint128_t rows[128] )
 {
 	__uint128_t cols[128] = {0};
     for ( int j = 0; j < 128; ++j )
@@ -35,7 +35,7 @@ static inline void build_matrix128( __uint128_t C, __uint128_t rows[128] )
         __uint128_t E = ( (__uint128_t)1 ) << j;
         cols[j]     =  tower_height_7_mul(C, E);
     }
-	transpose128( cols, rows );
+	transpose128x128( cols, rows );
 
 }
 
@@ -182,7 +182,7 @@ public:
 			}
 
 			// build the mul by constant matrix when the interpolation point are interpreted as 128 bit values as opposed to 4 bit values above
-			build_matrix128(to_bigint((uint32_t*)coefficient_as_value), (__uint128_t*)(mul_by_constant_matrix_height_7[interpolation_point]));
+			build_matrix_tower_height_7(to_bigint((uint32_t*)coefficient_as_value), (__uint128_t*)(mul_by_constant_matrix_height_7[interpolation_point]));
 
 		}
 
@@ -320,7 +320,7 @@ public:
 
 
 		__uint128_t chl_mul_by_constant_matrix_height_7[128];
-		build_matrix128(to_bigint((uint32_t*)challenge), chl_mul_by_constant_matrix_height_7);
+		build_matrix_tower_height_7(to_bigint((uint32_t*)challenge), chl_mul_by_constant_matrix_height_7);
 
 		// Load the folded columns
 		if (num_eval_points_per_multilinear <= 32) {

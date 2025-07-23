@@ -166,9 +166,6 @@ __host__ __device__ void fold_batch(
 	uint32_t product[BITS_WIDTH];
 	memset(product, 0, BITS_WIDTH * sizeof(uint32_t));
 
-	// Multiply chunk-wise based on field height of coefficient
-	// For random challenges this will be the full 7
-	// For interpolation points this will be no more than 2
 	mul_via_matrix_bitsliced_four_russians_128bit(
 		coefficient_constant_mul_map,
 		xor_of_halves,
