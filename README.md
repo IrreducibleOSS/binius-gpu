@@ -13,7 +13,7 @@ This code is experimental and not currently used by the official Binius prover.
 ## Build and run with CMake
 
 ```
-    cmake -B./build  -DCMAKE_CUDA_HOST_COMPILER="g++" -DCMAKE_CXX_COMPILER="g++"
+    cmake -B./build -DCMAKE_BUILD_TYPE=Release
     cmake --build ./build
 ```
 
