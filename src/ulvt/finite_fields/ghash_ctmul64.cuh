@@ -1,25 +1,73 @@
 #pragma once
 
+#include <cstdint>
+
 namespace ghash_ctmul64 {
 
 /** Elements of GF(2^128) represented as F[X] / (X^128 + X^7 + X^2 + X + 1)
+ *
+ * Limbs are little-endian: limbs[0] holds coefficients of X^0..X^63, limbs[1]
+ * holds X^64..X^127.
  */
 class Ghash {
 public:
     uint64_t limbs[2];
 
-    // TODO: constructors taking __uint128 (limbs are little-endian)
-    // TODO: operator overloads for +, -, *, =, !=, and assignment versions
-    // +, - are xor
+    __host__ __device__ Ghash() : limbs{0, 0} {}
+    __host__ __device__ Ghash(const uint64_t (&limbs)[2]) : limbs{limbs[0], limbs[1]} {}
+    __host__ __device__ Ghash(__uint128_t value)
+        : limbs{(uint64_t)value, (uint64_t)(value >> 64)} {}
+
+    __host__ __device__ bool operator==(const Ghash& o) const {
+        return limbs[0] == o.limbs[0] && limbs[1] == o.limbs[1];
+    }
+    __host__ __device__ bool operator!=(const Ghash& o) const { return !(*this == o); }
+
+    // Addition and subtraction in GF(2^128) are both XOR.
+    __host__ __device__ Ghash& operator+=(const Ghash& o) {
+        limbs[0] ^= o.limbs[0];
+        limbs[1] ^= o.limbs[1];
+        return *this;
+    }
+    __host__ __device__ Ghash& operator-=(const Ghash& o) { return *this += o; }
+    __host__ __device__ Ghash operator+(const Ghash& o) const {
+        Ghash r = *this;
+        return r += o;
+    }
+    __host__ __device__ Ghash operator-(const Ghash& o) const { return *this + o; }
+
+    // Defined out-of-line below, after clmad() and reduce().
+    __host__ __device__ Ghash operator*(const Ghash& o) const;
+    __host__ __device__ Ghash& operator*=(const Ghash& o);
 };
 
 class GhashWide {
 public:
     uint64_t limbs[4];
 
-    // TODO: constructors taking __uint128 (limbs are little-endian)
-    // TODO: operator overloads for +, -, *, =, !=, and assignment versions
-    // +, - are xor
+    __host__ __device__ GhashWide() : limbs{0, 0, 0, 0} {}
+    __host__ __device__ GhashWide(const uint64_t (&limbs)[4])
+        : limbs{limbs[0], limbs[1], limbs[2], limbs[3]} {}
+    __host__ __device__ GhashWide(__uint128_t value)
+        : limbs{(uint64_t)value, (uint64_t)(value >> 64), 0, 0} {}
+
+    __host__ __device__ bool operator==(const GhashWide& o) const {
+        return limbs[0] == o.limbs[0] && limbs[1] == o.limbs[1] && limbs[2] == o.limbs[2] &&
+               limbs[3] == o.limbs[3];
+    }
+    __host__ __device__ bool operator!=(const GhashWide& o) const { return !(*this == o); }
+
+    // Addition and subtraction are both XOR.
+    __host__ __device__ GhashWide& operator+=(const GhashWide& o) {
+        for (int i = 0; i < 4; ++i) limbs[i] ^= o.limbs[i];
+        return *this;
+    }
+    __host__ __device__ GhashWide& operator-=(const GhashWide& o) { return *this += o; }
+    __host__ __device__ GhashWide operator+(const GhashWide& o) const {
+        GhashWide r = *this;
+        return r += o;
+    }
+    __host__ __device__ GhashWide operator-(const GhashWide& o) const { return *this + o; }
 };
 
 /* Code below from BearSSL (https://www.bearssl.org/git/BearSSL) */
@@ -60,7 +108,7 @@ bmul64(uint64_t x, uint64_t y)
 #include <arm_acle.h>
 #endif
 
-__host__ __device__ static inline rev64(uint64_t x) {
+__host__ __device__ static inline uint64_t rev64(uint64_t x) {
 #if defined(__CUDA_ARCH__)
     return __brevll(x);
 #elif defined(__aarch64__)
@@ -102,7 +150,7 @@ static void clmad(const Ghash& lhs, const Ghash& rhs, GhashWide& out) {
 
     const auto z0 = bmul64(x0, y0);
     const auto z1 = bmul64(x1, y1);
-    auto z2 = bmul(x2, y2);
+    auto z2 = bmul64(x2, y2);
 
 	auto z0h = bmul64(x0r, y0r);
 	auto z1h = bmul64(x1r, y1r);
@@ -138,9 +186,20 @@ static Ghash reduce(GhashWide x) {
 	v0 ^= v2 ^ (v2 << 1) ^ (v2 << 2) ^ (v2 << 7);
 	v1 ^= (v2 >> 63) ^ (v2 >> 62) ^ (v2 >> 57);
 
-    return Ghash {
-        .limbs = { v0, v1 },
-    };
+    return Ghash({v0, v1});
+}
+
+/** Multiply in GF(2^128): carryless multiply-accumulate into a wide product,
+ * then reduce modulo X^128 + X^7 + X^2 + X + 1. */
+__host__ __device__ inline Ghash Ghash::operator*(const Ghash& o) const {
+    GhashWide wide;  // zero-initialized; clmad accumulates with ^=
+    clmad(*this, o, wide);
+    return reduce(wide);
+}
+
+__host__ __device__ inline Ghash& Ghash::operator*=(const Ghash& o) {
+    *this = *this * o;
+    return *this;
 }
 
 }; // namespace ghash_ctmul64

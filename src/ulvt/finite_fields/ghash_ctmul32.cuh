@@ -1,25 +1,88 @@
 #pragma once
 
+#include <cstdint>
+
 namespace ghash_ctmul32 {
 
 /** Elements of GF(2^128) represented as F[X] / (X^128 + X^7 + X^2 + X + 1)
+ *
+ * Limbs are little-endian: limbs[0] holds coefficients of X^0..X^31, limbs[1]
+ * holds X^32..X^63, and so on.
  */
 class Ghash {
 public:
     uint32_t limbs[4];
 
-    // TODO: constructors taking __uint128 (limbs are little-endian)
-    // TODO: operator overloads for +, -, *, =, !=, and assignment versions
-    // +, - are xor
+    __host__ __device__ Ghash() : limbs{0, 0, 0, 0} {}
+    __host__ __device__ Ghash(const uint32_t (&limbs)[4])
+        : limbs{limbs[0], limbs[1], limbs[2], limbs[3]} {}
+    __host__ __device__ Ghash(__uint128_t value)
+        : limbs{
+              (uint32_t)value,
+              (uint32_t)(value >> 32),
+              (uint32_t)(value >> 64),
+              (uint32_t)(value >> 96),
+          } {}
+
+    __host__ __device__ bool operator==(const Ghash& o) const {
+        return limbs[0] == o.limbs[0] && limbs[1] == o.limbs[1] && limbs[2] == o.limbs[2] &&
+               limbs[3] == o.limbs[3];
+    }
+    __host__ __device__ bool operator!=(const Ghash& o) const { return !(*this == o); }
+
+    // Addition and subtraction in GF(2^128) are both XOR.
+    __host__ __device__ Ghash& operator+=(const Ghash& o) {
+        for (int i = 0; i < 4; ++i) limbs[i] ^= o.limbs[i];
+        return *this;
+    }
+    __host__ __device__ Ghash& operator-=(const Ghash& o) { return *this += o; }
+    __host__ __device__ Ghash operator+(const Ghash& o) const {
+        Ghash r = *this;
+        return r += o;
+    }
+    __host__ __device__ Ghash operator-(const Ghash& o) const { return *this + o; }
+
+    // Defined out-of-line below, after clmad() and reduce().
+    __host__ __device__ Ghash operator*(const Ghash& o) const;
+    __host__ __device__ Ghash& operator*=(const Ghash& o);
 };
 
 class GhashWide {
 public:
     uint32_t limbs[8];
 
-    // TODO: constructors taking __uint128 (limbs are little-endian)
-    // TODO: operator overloads for +, -, *, =, !=, and assignment versions
-    // +, - are xor
+    __host__ __device__ GhashWide() : limbs{0, 0, 0, 0, 0, 0, 0, 0} {}
+    __host__ __device__ GhashWide(__uint128_t value)
+        : limbs{
+              (uint32_t)value,
+              (uint32_t)(value >> 32),
+              (uint32_t)(value >> 64),
+              (uint32_t)(value >> 96),
+              0,
+              0,
+              0,
+              0,
+          } {}
+
+    __host__ __device__ bool operator==(const GhashWide& o) const {
+        for (int i = 0; i < 8; ++i) {
+            if (limbs[i] != o.limbs[i]) return false;
+        }
+        return true;
+    }
+    __host__ __device__ bool operator!=(const GhashWide& o) const { return !(*this == o); }
+
+    // Addition and subtraction are both XOR.
+    __host__ __device__ GhashWide& operator+=(const GhashWide& o) {
+        for (int i = 0; i < 8; ++i) limbs[i] ^= o.limbs[i];
+        return *this;
+    }
+    __host__ __device__ GhashWide& operator-=(const GhashWide& o) { return *this += o; }
+    __host__ __device__ GhashWide operator+(const GhashWide& o) const {
+        GhashWide r = *this;
+        return r += o;
+    }
+    __host__ __device__ GhashWide operator-(const GhashWide& o) const { return *this + o; }
 };
 
 /* Code below from BearSSL (https://www.bearssl.org/git/BearSSL) */
@@ -27,7 +90,7 @@ public:
 /*
  * Multiplication in GF(2)[X], truncated to its low 32 bits.
  */
-static inline uint32_t
+__host__ __device__ static inline uint32_t
 bmul32(uint32_t x, uint32_t y)
 {
 	uint32_t x0, x1, x2, x3;
@@ -150,7 +213,7 @@ static void clmad(const Ghash& lhs, const Ghash& rhs, GhashWide& out) {
     b[16] = b[10] ^ b[12];
     b[17] = b[15] ^ b[16];
 
-    for (i = 0; i < 18; i ++) {
+    for (int i = 0; i < 18; i ++) {
         c[i] = bmul32(a[i], b[i]);
     }
 
@@ -169,18 +232,18 @@ static void clmad(const Ghash& lhs, const Ghash& rhs, GhashWide& out) {
      */
 
     uint32_t vw[8];
-    v[0] = c[0];
-    v[1] = c[4] ^ (rev32(c[9]) >> 1);
-    v[2] = c[1] ^ c[0] ^ c[2] ^ c[6] ^ (rev32(c[13]) >> 1);
-    v[3] = c[4] ^ c[5] ^ c[8]
+    vw[0] = c[0];
+    vw[1] = c[4] ^ (rev32(c[9]) >> 1);
+    vw[2] = c[1] ^ c[0] ^ c[2] ^ c[6] ^ (rev32(c[13]) >> 1);
+    vw[3] = c[4] ^ c[5] ^ c[8]
         ^ (rev32(c[10] ^ c[9] ^ c[11] ^ c[15]) >> 1);
-    v[4] = c[2] ^ c[1] ^ c[3] ^ c[7]
+    vw[4] = c[2] ^ c[1] ^ c[3] ^ c[7]
         ^ (rev32(c[13] ^ c[14] ^ c[17]) >> 1);
-    v[5] = c[5] ^ (rev32(c[11] ^ c[10] ^ c[12] ^ c[16]) >> 1);
-    v[6] = c[3] ^ (rev32(c[14]) >> 1);
-    v[7] = rev32(c[12]) >> 1;
+    vw[5] = c[5] ^ (rev32(c[11] ^ c[10] ^ c[12] ^ c[16]) >> 1);
+    vw[6] = c[3] ^ (rev32(c[14]) >> 1);
+    vw[7] = rev32(c[12]) >> 1;
 
-    for (i = 0; i < 8; i ++) {
+    for (int i = 0; i < 8; i ++) {
         out.limbs[i] ^= vw[i];
     }
 }
@@ -190,15 +253,26 @@ __host__ __device__
 static Ghash reduce(GhashWide x) {
     auto vw = x.limbs;
 
-    for (i = 7; i >= 4; i --) {
-        auto lw = zw[i];
+    for (int i = 7; i >= 4; i --) {
+        auto lw = vw[i];
         vw[i - 4] ^= lw ^ (lw << 1) ^ (lw << 2) ^ (lw << 7);
         vw[i - 3] ^= (lw >> 31) ^ (lw >> 30) ^ (lw >> 25);
     }
 
-    return Ghash {
-        .limbs = { vw[0], vw[1], vw[2], vw[3] },
-    };
+    return Ghash({vw[0], vw[1], vw[2], vw[3]});
+}
+
+/** Multiply in GF(2^128): carryless multiply-accumulate into a wide product,
+ * then reduce modulo X^128 + X^7 + X^2 + X + 1. */
+__host__ __device__ inline Ghash Ghash::operator*(const Ghash& o) const {
+    GhashWide wide;  // zero-initialized; clmad accumulates with ^=
+    clmad(*this, o, wide);
+    return reduce(wide);
+}
+
+__host__ __device__ inline Ghash& Ghash::operator*=(const Ghash& o) {
+    *this = *this * o;
+    return *this;
 }
 
 }; // namespace ghash_ctmul32
