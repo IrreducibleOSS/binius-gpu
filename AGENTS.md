@@ -37,14 +37,22 @@ Run a single Catch2 test case or section by name/tag, e.g. `./build/finite_field
 
 ## Architecture
 
-CMake builds four static libraries from `src/ulvt/`:
+The build is organized per module: the top-level `CMakeLists.txt` defines shared settings and `add_subdirectory(src/ulvt)`, and each module directory under `src/ulvt/` has its own `CMakeLists.txt` owning its targets (explicit source lists, not globs). The libraries:
 
-- **`ulvt_gpu`** — finite fields (`finite_fields/`), additive NTT (`ntt/`), shared utils (`utils/`). Public include dir is `./src`, so headers are included as `ulvt/...`. Link against this for NTT and field ops.
-- **`sumcheck`** — binary-tower sumcheck (`sumcheck/`). Link against this for sumcheck. Depends on `unrolled`.
-- **`prime_field_sumcheck`** — a separate sumcheck over the QM31 prime-field tower (`prime_field_sumcheck/`). Independent of the binary-tower path.
-- **`unrolled`** — machine-generated, fully unrolled tower-field multiply circuits (`finite_fields/circuit_generator/unrolled/`), produced by `circuit_generator`. Linked privately into `ulvt_gpu` and `sumcheck`.
+- **`ulvt_utils`** (`utils/`) — shared GPU helpers (`check_gpu_capabilities`, bit-slicing, assert macros).
+- **`ulvt_ntt`** (`ntt/`) — additive NTT.
+- **`unrolled`** (`finite_fields/circuit_generator/unrolled/`) — machine-generated, fully unrolled tower-field multiply circuits, produced by the `circuit_generator` tool. Used by `ulvt_ff_kernels` and `sumcheck`.
+- **`ulvt_ff_kernels`** / **`ulvt_circuit_utils`** (under `finite_fields/`) — throughput/profiling kernels and circuit-generator string helpers; test/bench support, not core math.
+- **`sumcheck`** (`sumcheck/`) — binary-tower sumcheck. Depends on `unrolled`.
+- **`prime_field_sumcheck`** (`prime_field_sumcheck/`) — separate sumcheck over the QM31 prime-field tower. Independent of the binary-tower path.
 
-All CUDA targets use `CUDA_SEPARABLE_COMPILATION ON` and compile with `--use_fast_math --generate-line-info --relocatable-device-code=true`.
+The finite-field arithmetic itself (`baby_bear`, `binary_tower`, `ghash`, `m31`/`cm31`/`qm31`, …) is **header-only** — there is no "finite fields" object library. The interface targets tie it together:
+
+- **`ulvt_common`** (INTERFACE) — the `src` include root (so headers resolve as `ulvt/...`) plus `cxx_std_23`; linked by every module.
+- **`ulvt_cuda_opts`** (INTERFACE) — common nvcc flags (`--generate-line-info --use_fast_math`), linked into the executables.
+- **`ulvt_gpu`** (INTERFACE) — umbrella over `ulvt_ntt` + `ulvt_utils` + `unrolled` for the NTT and finite-field code; this is the link target the README documents.
+
+CUDA separable compilation, the CUDA standard (`23`), the runtime output directory (so all executables land in `build/`), and the Release `STRIP_ASSERTIONS`/`STRIP_CUDA_CHECK` definitions are all set once at the top level (after the third-party subdirectories, so they don't leak into Catch2/nvbench).
 
 ### Finite fields (`src/ulvt/finite_fields/`)
 
