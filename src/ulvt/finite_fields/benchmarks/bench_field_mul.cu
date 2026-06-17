@@ -15,6 +15,8 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include "ulvt/finite_fields/ghash_ctmul32.cuh"
+#include "ulvt/finite_fields/ghash_ctmul64.cuh"
 #include "ulvt/finite_fields/m31.cuh"
 
 namespace {
@@ -40,9 +42,10 @@ __device__ inline void mul_passes(T* batch, int n_passes)
 
 // Fold a batch down to a single field element using field addition. Produces a
 // cheap, escape-resistant summary of the final batch so the optimizer cannot
-// prove the multiplies are dead.
+// prove the multiplies are dead. (Named `fold`, not `reduce`, to avoid clashing
+// with the GF(2^128) `reduce` the ghash headers define.)
 template <typename T, int Batch>
-__device__ inline T reduce(const T* batch)
+__device__ inline T fold(const T* batch)
 {
     T acc = batch[0];
 #pragma unroll
@@ -79,6 +82,23 @@ QM31 random_elem<QM31>(std::mt19937& rng)
     return QM31(CM31(limbs[0], limbs[1]), CM31(limbs[2], limbs[3]));
 }
 
+// Every 128-bit pattern is a valid GF(2^128) element, so draw full-width words.
+template <>
+ghash_ctmul32::Ghash random_elem<ghash_ctmul32::Ghash>(std::mt19937& rng)
+{
+    uint32_t limbs[4] = {static_cast<uint32_t>(rng()), static_cast<uint32_t>(rng()),
+                         static_cast<uint32_t>(rng()), static_cast<uint32_t>(rng())};
+    return ghash_ctmul32::Ghash(limbs);
+}
+
+template <>
+ghash_ctmul64::Ghash random_elem<ghash_ctmul64::Ghash>(std::mt19937& rng)
+{
+    auto word = [&] { return (static_cast<uint64_t>(rng()) << 32) | rng(); };
+    uint64_t limbs[2] = {word(), word()};
+    return ghash_ctmul64::Ghash(limbs);
+}
+
 // ----------------------------------------------------------------------------
 // GPU benchmark.
 
@@ -97,7 +117,7 @@ __global__ void gpu_mul_kernel(const T* __restrict__ seeds,
     mul_passes<T, Batch>(batch, n_passes);
 
     // Store an escape-resistant summary to global memory.
-    results[tid] = reduce<T, Batch>(batch);
+    results[tid] = fold<T, Batch>(batch);
 }
 
 template <typename T, int Batch>
@@ -140,16 +160,21 @@ void gpu_mul(nvbench::state& state)
 // Registrations. Concrete wrappers avoid the comma-in-macro problem with
 // templated benchmark functions.
 //
-// Batch sizes are picked to give both types a comparable live-data register
-// budget (~32 registers): QM31 is 16 B (4 registers/element) so it gets 8,
-// while M31 is 4 B (1 register/element) so it can afford 32. Larger batches
-// also mean a wider stride and so more independent multiply chains for ILP.
+// Batch sizes are picked to give every type a comparable live-data register
+// budget (~32 registers). M31 is 4 B (1 register/element) so it gets 32; QM31
+// and both Ghash variants are 16 B (4 registers/element) so they get 8. Larger
+// batches also mean a wider stride and so more independent multiply chains for
+// ILP.
 void gpu_mul_m31(nvbench::state& state) { gpu_mul<M31, 32>(state); }
 void gpu_mul_qm31(nvbench::state& state) { gpu_mul<QM31, 8>(state); }
+void gpu_mul_ghash_ctmul32(nvbench::state& state) { gpu_mul<ghash_ctmul32::Ghash, 8>(state); }
+void gpu_mul_ghash_ctmul64(nvbench::state& state) { gpu_mul<ghash_ctmul64::Ghash, 8>(state); }
 
 } // namespace
 
 NVBENCH_BENCH(gpu_mul_m31).add_int64_axis("Passes", {512});
 NVBENCH_BENCH(gpu_mul_qm31).add_int64_axis("Passes", {512});
+NVBENCH_BENCH(gpu_mul_ghash_ctmul32).add_int64_axis("Passes", {512});
+NVBENCH_BENCH(gpu_mul_ghash_ctmul64).add_int64_axis("Passes", {512});
 
 NVBENCH_MAIN;
