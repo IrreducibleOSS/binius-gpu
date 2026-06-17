@@ -2,7 +2,7 @@
 #include <chrono>
 #include <vector>
 
-#include "../finite_fields/qm31.cuh"
+#include "../finite_fields/m31.cuh"
 #include "core/kernels.cuh"
 
 template <uint32_t NUM_VARS> class Sumcheck {

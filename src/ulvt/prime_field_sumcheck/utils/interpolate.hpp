@@ -1,4 +1,4 @@
-#include "../../finite_fields/qm31.cuh"
+#include "../../finite_fields/m31.cuh"
 
 constexpr QM31 one_half = (uint32_t) 0x40000000;
 

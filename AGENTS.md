@@ -46,7 +46,7 @@ The build is organized per module: the top-level `CMakeLists.txt` defines shared
 - **`sumcheck`** (`sumcheck/`) — binary-tower sumcheck. Depends on `unrolled`.
 - **`prime_field_sumcheck`** (`prime_field_sumcheck/`) — separate sumcheck over the QM31 prime-field tower. Independent of the binary-tower path.
 
-The finite-field arithmetic itself (`baby_bear`, `binary_tower`, `ghash`, `m31`/`cm31`/`qm31`, …) is **header-only** — there is no "finite fields" object library. The interface targets tie it together:
+The finite-field arithmetic itself (`baby_bear`, `binary_tower`, `ghash`, `m31` with its `CM31`/`QM31` towers, …) is **header-only** — there is no "finite fields" object library. The interface targets tie it together:
 
 - **`ulvt_common`** (INTERFACE) — the `src` include root (so headers resolve as `ulvt/...`) plus `cxx_std_23`; linked by every module.
 - **`ulvt_cuda_opts`** (INTERFACE) — common nvcc flags (`--generate-line-info --use_fast_math`), linked into the executables.
@@ -60,7 +60,7 @@ CUDA separable compilation, the CUDA standard (`23`), the runtime output directo
 - `binary_tower_simd.cuh` — bit-sliced field arithmetic (operate on 32 elements in parallel across the bits of `uint32_t` lanes).
 - `ghash_ctmul32.cuh` / `ghash_ctmul64.cuh` — GF(2^128) as F[X]/(X^128 + X^7 + X^2 + X + 1), carryless-multiply implementations ported from BearSSL.
 - `circuit_generator/` — a CPU tool that generates the unrolled multiply circuits in `unrolled/`.
-- `baby_bear.cuh`, `m31.cuh`, `cm31.cuh`, `qm31.cuh` — prime fields and extensions used by the prime-field sumcheck.
+- `baby_bear.cuh`, `m31.cuh` — prime fields and extensions used by the prime-field sumcheck. `m31.cuh` defines `M31` and its extension towers `CM31` and `QM31`.
 
 ### Bit-slicing (`src/ulvt/utils/bitslicing.cuh`)
 

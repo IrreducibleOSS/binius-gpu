@@ -1,6 +1,6 @@
 #include <cstdint>
 
-#include "../../finite_fields/qm31.cuh"
+#include "../../finite_fields/m31.cuh"
 
 __global__ void fold_list_halves(QM31 *list, QM31 challenge,
                                  uint32_t current_col_size,

@@ -1,4 +1,4 @@
-#include "../../finite_fields/qm31.cuh"
+#include "../../finite_fields/m31.cuh"
 #include <cstdint>
 #include <stdio.h>
 

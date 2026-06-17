@@ -1,4 +1,4 @@
-#include "../finite_fields/qm31.cuh"
+#include "../finite_fields/m31.cuh"
 #include "./utils/interpolate.hpp"
 #include "sumcheck.cuh"
 #include <array>
