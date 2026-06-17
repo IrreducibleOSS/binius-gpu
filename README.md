@@ -17,6 +17,25 @@ This code is experimental and not currently used by the official Binius prover.
     cmake --build ./build
 ```
 
+### GPU target architecture
+
+The project does not pin a CUDA architecture, so CMake fills in its default:
+the oldest architecture supported by the installed CUDA toolkit (for example,
+`sm_75` / Turing with CUDA 13). The resulting binary embeds PTX, so it still
+runs on newer GPUs via JIT, but it is not compiled for them and the SASS is not
+tuned to the device actually running it.
+
+When building on the machine you will run on, configure for its exact
+architecture so the kernels are compiled natively (this matters in particular
+for the throughput benchmarks):
+
+```
+    cmake -B./build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=native
+```
+
+`native` probes the local GPU; if you are cross-compiling, pass the explicit
+compute capability instead (e.g. `-DCMAKE_CUDA_ARCHITECTURES=90` for Hopper).
+
 ## Run module test files and benchmarks
 NTTs and Finite Field Operations (Benchmarks and tests together)
 ```

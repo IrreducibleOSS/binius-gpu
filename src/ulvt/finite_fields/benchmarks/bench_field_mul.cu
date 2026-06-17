@@ -12,6 +12,8 @@
 #include <array>
 #include <cstdint>
 #include <random>
+#include <stdexcept>
+#include <string>
 
 #include <nvbench/nvbench.cuh>
 
@@ -102,6 +104,18 @@ ghash_ctmul64::Ghash random_elem<ghash_ctmul64::Ghash>(std::mt19937& rng)
 // ----------------------------------------------------------------------------
 // GPU benchmark.
 
+// Abort the benchmark if a CUDA call failed. Deliberately not the repo's
+// CUDA_CHECK macro: that compiles to a no-op under STRIP_CUDA_CHECK (set in
+// Release, which is exactly how benchmarks are built). A silent launch failure
+// -- e.g. a binary built for the wrong GPU architecture -- would otherwise be
+// timed as a near-instant no-op and reported as absurd throughput.
+void check_cuda(cudaError_t err, const char* what)
+{
+    if (err != cudaSuccess) {
+        throw std::runtime_error(std::string(what) + ": " + cudaGetErrorString(err));
+    }
+}
+
 template <typename T, int Batch>
 __global__ void gpu_mul_kernel(const T* __restrict__ seeds,
                                T* __restrict__ results, int n_passes)
@@ -138,9 +152,18 @@ void gpu_mul(nvbench::state& state)
 
     T* seeds = nullptr;
     T* results = nullptr;
-    cudaMalloc(&seeds, sizeof(host_seeds));
-    cudaMalloc(&results, threads * sizeof(T));
-    cudaMemcpy(seeds, host_seeds.data(), sizeof(host_seeds), cudaMemcpyHostToDevice);
+    check_cuda(cudaMalloc(&seeds, sizeof(host_seeds)), "cudaMalloc(seeds)");
+    check_cuda(cudaMalloc(&results, threads * sizeof(T)), "cudaMalloc(results)");
+    check_cuda(cudaMemcpy(seeds, host_seeds.data(), sizeof(host_seeds), cudaMemcpyHostToDevice),
+               "cudaMemcpy(seeds)");
+
+    // Warm-up launch outside the timed region: verify the kernel actually runs
+    // on this device. cudaGetLastError() catches launch-time failures (bad
+    // config, no kernel image for this architecture); cudaDeviceSynchronize()
+    // catches errors raised during execution.
+    gpu_mul_kernel<T, Batch><<<blocks, threads_per_block>>>(seeds, results, n_passes);
+    check_cuda(cudaGetLastError(), "gpu_mul_kernel launch");
+    check_cuda(cudaDeviceSynchronize(), "gpu_mul_kernel execution");
 
     // Each of `threads` threads performs Batch * Passes multiplies per launch.
     state.add_element_count(
