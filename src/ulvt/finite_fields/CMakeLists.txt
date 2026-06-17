@@ -38,3 +38,8 @@ target_link_libraries(finite_field_tests
 
 add_executable(gpu-benchmarks tests/profiling/gpu_benchmarks.cu)
 target_link_libraries(gpu-benchmarks PRIVATE ulvt_ff_kernels ulvt_cuda_opts nvbench::nvbench)
+
+# Finite-field multiplication throughput benchmarks (CPU and GPU) on nvbench.
+add_executable(field-mul-benchmarks benchmarks/bench_field_mul.cu)
+target_link_libraries(field-mul-benchmarks
+    PRIVATE ulvt_common ulvt_cuda_opts nvbench::nvbench)

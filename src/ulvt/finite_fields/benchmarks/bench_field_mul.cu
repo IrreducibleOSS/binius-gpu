@@ -1,0 +1,155 @@
+// Finite-field multiplication throughput benchmarks (GPU) built on nvbench.
+//
+// Field multiplies are tiny, fully-inlined operations, so timing a single one
+// is meaningless. Instead we time a *sequence* of multiplies. The strategy
+// (ported from a Rust harness that gave good results) keeps a small register
+// batch of elements and repeatedly multiplies strided pairs in place. The
+// stride is half the batch, which breaks the serial dependency chain into
+// `Batch/2` independent chains so the hardware can pipeline them -- we measure
+// throughput, not single-multiply latency. `Passes` controls how many multiply
+// rounds happen per timed invocation.
+
+#include <array>
+#include <cstdint>
+#include <random>
+
+#include <nvbench/nvbench.cuh>
+
+#include "ulvt/finite_fields/m31.cuh"
+
+namespace {
+
+// ----------------------------------------------------------------------------
+// The core unit of work.
+//
+// Multiplies strided pairs of `batch` in place for `n_passes` rounds. The inner
+// loop is unrolled so the `(i + Batch/2) % Batch` indices are compile-time
+// constants; that is what keeps `batch` in registers (a register array indexed
+// by a runtime value would spill to local memory). Keep this pure -- the store
+// that defeats dead-code elimination lives in the kernel.
+template <typename T, int Batch>
+__device__ inline void mul_passes(T* batch, int n_passes)
+{
+    for (int p = 0; p < n_passes; ++p) {
+#pragma unroll
+        for (int i = 0; i < Batch; ++i) {
+            batch[i] = batch[i] * batch[(i + Batch / 2) % Batch];
+        }
+    }
+}
+
+// Fold a batch down to a single field element using field addition. Produces a
+// cheap, escape-resistant summary of the final batch so the optimizer cannot
+// prove the multiplies are dead.
+template <typename T, int Batch>
+__device__ inline T reduce(const T* batch)
+{
+    T acc = batch[0];
+#pragma unroll
+    for (int i = 1; i < Batch; ++i) {
+        acc = acc + batch[i];
+    }
+    return acc;
+}
+
+// ----------------------------------------------------------------------------
+// Random element generation (host side).
+
+uint32_t random_limb(std::mt19937& rng)
+{
+    // Uniform over [0, P) = [0, 2^31 - 1).
+    std::uniform_int_distribution<uint32_t> dist(0, M31::P - 1);
+    return dist(rng);
+}
+
+template <typename T>
+T random_elem(std::mt19937& rng);
+
+template <>
+M31 random_elem<M31>(std::mt19937& rng)
+{
+    return M31(random_limb(rng));
+}
+
+template <>
+QM31 random_elem<QM31>(std::mt19937& rng)
+{
+    M31 limbs[4] = {M31(random_limb(rng)), M31(random_limb(rng)),
+                    M31(random_limb(rng)), M31(random_limb(rng))};
+    return QM31(CM31(limbs[0], limbs[1]), CM31(limbs[2], limbs[3]));
+}
+
+// ----------------------------------------------------------------------------
+// GPU benchmark.
+
+template <typename T, int Batch>
+__global__ void gpu_mul_kernel(const T* __restrict__ seeds,
+                               T* __restrict__ results, int n_passes)
+{
+    const uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+    T batch[Batch];
+#pragma unroll
+    for (int i = 0; i < Batch; ++i) {
+        batch[i] = seeds[i];
+    }
+
+    mul_passes<T, Batch>(batch, n_passes);
+
+    // Store an escape-resistant summary to global memory.
+    results[tid] = reduce<T, Batch>(batch);
+}
+
+template <typename T, int Batch>
+void gpu_mul(nvbench::state& state)
+{
+    const auto n_passes = static_cast<int>(state.get_int64("Passes"));
+
+    constexpr unsigned threads_per_block = 256;
+    constexpr unsigned blocks = 1024;
+    constexpr unsigned threads = threads_per_block * blocks;
+
+    // Seed batch: identical across threads (values are irrelevant to timing).
+    std::mt19937 rng(0xC0FFEEu);
+    std::array<T, Batch> host_seeds;
+    for (auto& e : host_seeds) {
+        e = random_elem<T>(rng);
+    }
+
+    T* seeds = nullptr;
+    T* results = nullptr;
+    cudaMalloc(&seeds, sizeof(host_seeds));
+    cudaMalloc(&results, threads * sizeof(T));
+    cudaMemcpy(seeds, host_seeds.data(), sizeof(host_seeds), cudaMemcpyHostToDevice);
+
+    // Each of `threads` threads performs Batch * Passes multiplies per launch.
+    state.add_element_count(
+        static_cast<std::size_t>(threads) * Batch * n_passes, "Muls");
+
+    state.exec([=](nvbench::launch& launch) {
+        gpu_mul_kernel<T, Batch>
+            <<<blocks, threads_per_block, 0, launch.get_stream()>>>(
+                seeds, results, n_passes);
+    });
+
+    cudaFree(seeds);
+    cudaFree(results);
+}
+
+// ----------------------------------------------------------------------------
+// Registrations. Concrete wrappers avoid the comma-in-macro problem with
+// templated benchmark functions.
+//
+// Batch sizes are picked to give both types a comparable live-data register
+// budget (~32 registers): QM31 is 16 B (4 registers/element) so it gets 8,
+// while M31 is 4 B (1 register/element) so it can afford 32. Larger batches
+// also mean a wider stride and so more independent multiply chains for ILP.
+void gpu_mul_m31(nvbench::state& state) { gpu_mul<M31, 32>(state); }
+void gpu_mul_qm31(nvbench::state& state) { gpu_mul<QM31, 8>(state); }
+
+} // namespace
+
+NVBENCH_BENCH(gpu_mul_m31).add_int64_axis("Passes", {512});
+NVBENCH_BENCH(gpu_mul_qm31).add_int64_axis("Passes", {512});
+
+NVBENCH_MAIN;
