@@ -2,7 +2,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <random>
+#include <vector>
 
+#include "ulvt/finite_fields/ghash_clmul.cuh"
 #include "ulvt/finite_fields/ghash_ctmul32.cuh"
 #include "ulvt/finite_fields/ghash_ctmul64.cuh"
 
@@ -140,6 +142,10 @@ __uint128_t to_u128(const ghash_ctmul32::Ghash& g) {
 		   ((__uint128_t)g.limbs[1] << 32) | g.limbs[0];
 }
 
+__uint128_t to_u128(const ghash_clmul::Ghash& g) {
+	return ((__uint128_t)g.limbs[1] << 64) | g.limbs[0];
+}
+
 }  // namespace
 
 // The independent reference must agree with the project's known-answer vectors;
@@ -151,7 +157,8 @@ TEST_CASE("reference matches known-answer vectors", "[ghash][mul][kat]") {
 }
 
 TEMPLATE_TEST_CASE(
-	"Ghash known-answer vectors", "[ghash][mul][kat]", ghash_ctmul32::Ghash, ghash_ctmul64::Ghash
+	"Ghash known-answer vectors", "[ghash][mul][kat]", ghash_ctmul32::Ghash, ghash_ctmul64::Ghash,
+	ghash_clmul::Ghash
 ) {
 	using Ghash = TestType;
 	for (const auto& v : kVectors) {
@@ -167,7 +174,7 @@ TEMPLATE_TEST_CASE(
 
 TEMPLATE_TEST_CASE(
 	"Ghash multiplication structured cases", "[ghash][mul]", ghash_ctmul32::Ghash,
-	ghash_ctmul64::Ghash
+	ghash_ctmul64::Ghash, ghash_clmul::Ghash
 ) {
 	using Ghash = TestType;
 
@@ -199,7 +206,8 @@ TEMPLATE_TEST_CASE(
 // ---------------------------------------------------------------------------
 
 TEMPLATE_TEST_CASE(
-	"Ghash field axioms", "[ghash][mul]", ghash_ctmul32::Ghash, ghash_ctmul64::Ghash
+	"Ghash field axioms", "[ghash][mul]", ghash_ctmul32::Ghash, ghash_ctmul64::Ghash,
+	ghash_clmul::Ghash
 ) {
 	using Ghash = TestType;
 
@@ -284,4 +292,91 @@ TEST_CASE("ghash_ctmul32 and ghash_ctmul64 agree", "[ghash][mul]") {
 		const __uint128_t p64 = to_u128(ghash_ctmul64::Ghash(a) * ghash_ctmul64::Ghash(b));
 		REQUIRE(p32 == p64);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Each multiply must also be correct when run on the GPU. This matters most for
+// ghash_clmul, whose `clmad` path only exists in device code (a host-only test
+// exercises its fallback instead). For ctmul32/ctmul64 it confirms device
+// codegen of the same source.
+// ---------------------------------------------------------------------------
+
+template <typename Ghash>
+__global__ void ghash_device_mul_ker(int n, const Ghash* a, const Ghash* b, Ghash* out) {
+	const int index = blockIdx.x * blockDim.x + threadIdx.x;
+	const int stride = blockDim.x * gridDim.x;
+	for (int i = index; i < n; i += stride) {
+		out[i] = a[i] * b[i];
+	}
+}
+
+namespace {
+
+// Multiply a[i]*b[i] on the device and return the products as __uint128_t.
+template <typename Ghash>
+std::vector<__uint128_t> device_mul(const std::vector<__uint128_t>& a,
+                                    const std::vector<__uint128_t>& b) {
+	const int n = static_cast<int>(a.size());
+	std::vector<Ghash> ha(n), hb(n);
+	for (int i = 0; i < n; ++i) {
+		ha[i] = Ghash(a[i]);
+		hb[i] = Ghash(b[i]);
+	}
+
+	Ghash *da = nullptr, *db = nullptr, *dout = nullptr;
+	const size_t bytes = static_cast<size_t>(n) * sizeof(Ghash);
+	REQUIRE(cudaMalloc(&da, bytes) == cudaSuccess);
+	REQUIRE(cudaMalloc(&db, bytes) == cudaSuccess);
+	REQUIRE(cudaMalloc(&dout, bytes) == cudaSuccess);
+	REQUIRE(cudaMemcpy(da, ha.data(), bytes, cudaMemcpyHostToDevice) == cudaSuccess);
+	REQUIRE(cudaMemcpy(db, hb.data(), bytes, cudaMemcpyHostToDevice) == cudaSuccess);
+
+	const int block = 256;
+	const int grid = (n + block - 1) / block;
+	ghash_device_mul_ker<Ghash><<<grid, block>>>(n, da, db, dout);
+	REQUIRE(cudaGetLastError() == cudaSuccess);
+	REQUIRE(cudaDeviceSynchronize() == cudaSuccess);
+
+	std::vector<Ghash> hout(n);
+	REQUIRE(cudaMemcpy(hout.data(), dout, bytes, cudaMemcpyDeviceToHost) == cudaSuccess);
+
+	cudaFree(da);
+	cudaFree(db);
+	cudaFree(dout);
+
+	std::vector<__uint128_t> products(n);
+	for (int i = 0; i < n; ++i) products[i] = to_u128(hout[i]);
+	return products;
+}
+
+}  // namespace
+
+TEMPLATE_TEST_CASE(
+	"Ghash multiply on device matches reference", "[ghash][mul][device]", ghash_ctmul32::Ghash,
+	ghash_ctmul64::Ghash, ghash_clmul::Ghash
+) {
+	using Ghash = TestType;
+
+	constexpr int N = 1 << 16;
+	std::mt19937_64 rng(0x9e3779b97f4a7c15ull);
+	std::vector<__uint128_t> a(N), b(N);
+	for (int i = 0; i < N; ++i) {
+		a[i] = u128(rng(), rng());
+		b[i] = u128(rng(), rng());
+	}
+
+	const std::vector<__uint128_t> got = device_mul<Ghash>(a, b);
+
+	// Tally a single failure rather than emitting N REQUIREs.
+	int mismatches = 0;
+	int first_bad = -1;
+	for (int i = 0; i < N; ++i) {
+		if (got[i] != mul_ref(a[i], b[i])) {
+			if (first_bad < 0) first_bad = i;
+			++mismatches;
+		}
+	}
+
+	INFO("mismatches=" << mismatches << " first at index " << first_bad);
+	REQUIRE(mismatches == 0);
 }

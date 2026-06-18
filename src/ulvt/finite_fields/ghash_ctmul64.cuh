@@ -175,7 +175,7 @@ static void clmad(const Ghash& lhs, const Ghash& rhs, GhashWide& out) {
 
 /** Reduce modulo X^128 + X^7 + X^2 + X + 1. */
 __host__ __device__
-static Ghash reduce(GhashWide x) {
+static inline Ghash reduce(GhashWide x) {
     auto v0 = x.limbs[0];
     auto v1 = x.limbs[1];
     auto v2 = x.limbs[2];

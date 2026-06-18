@@ -17,6 +17,7 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include "ulvt/finite_fields/ghash_clmul.cuh"
 #include "ulvt/finite_fields/ghash_ctmul32.cuh"
 #include "ulvt/finite_fields/ghash_ctmul64.cuh"
 #include "ulvt/finite_fields/m31.cuh"
@@ -99,6 +100,14 @@ ghash_ctmul64::Ghash random_elem<ghash_ctmul64::Ghash>(std::mt19937& rng)
     auto word = [&] { return (static_cast<uint64_t>(rng()) << 32) | rng(); };
     uint64_t limbs[2] = {word(), word()};
     return ghash_ctmul64::Ghash(limbs);
+}
+
+template <>
+ghash_clmul::Ghash random_elem<ghash_clmul::Ghash>(std::mt19937& rng)
+{
+    auto word = [&] { return (static_cast<uint64_t>(rng()) << 32) | rng(); };
+    uint64_t limbs[2] = {word(), word()};
+    return ghash_clmul::Ghash(limbs);
 }
 
 // ----------------------------------------------------------------------------
@@ -192,6 +201,7 @@ void gpu_mul_m31(nvbench::state& state) { gpu_mul<M31, 32>(state); }
 void gpu_mul_qm31(nvbench::state& state) { gpu_mul<QM31, 8>(state); }
 void gpu_mul_ghash_ctmul32(nvbench::state& state) { gpu_mul<ghash_ctmul32::Ghash, 8>(state); }
 void gpu_mul_ghash_ctmul64(nvbench::state& state) { gpu_mul<ghash_ctmul64::Ghash, 8>(state); }
+void gpu_mul_ghash_clmul(nvbench::state& state) { gpu_mul<ghash_clmul::Ghash, 8>(state); }
 
 } // namespace
 
@@ -199,5 +209,6 @@ NVBENCH_BENCH(gpu_mul_m31).add_int64_axis("Passes", {512});
 NVBENCH_BENCH(gpu_mul_qm31).add_int64_axis("Passes", {512});
 NVBENCH_BENCH(gpu_mul_ghash_ctmul32).add_int64_axis("Passes", {512});
 NVBENCH_BENCH(gpu_mul_ghash_ctmul64).add_int64_axis("Passes", {512});
+NVBENCH_BENCH(gpu_mul_ghash_clmul).add_int64_axis("Passes", {512});
 
 NVBENCH_MAIN;
