@@ -1,0 +1,110 @@
+name: GPU Simulator
+
+# Optional, non-required check. The hosted runners have no GPU, so this builds
+# the Catch2 test binaries and runs a subset of them on a simulated NVIDIA H100
+# (https://github.com/pantheongpu/pantheonsim). A simulator cannot reproduce
+# hardware-specific behavior or timing, so it complements real-GPU testing and
+# does not replace it.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/gpu-sim.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Catch2 tests (CUDA 13.0 and simulated H100)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up the simulated GPU and CUDA toolkit
+        uses: pantheongpu/setup-pantheonsim@deff5781e8adfd83dec98dd5242dcbc96a564773 # v0.1.10
+        with:
+          gpu: nvidia/h100
+          cuda-toolkit: "13.0"
+
+      # The vendored nvbench fetches rapids-cmake at configure time, and its
+      # current main needs CMake 4 or newer (the runner image has 3.31).
+      - name: Install a recent CMake
+        run: |
+          python3 -m venv "$RUNNER_TEMP/cmake-venv"
+          "$RUNNER_TEMP/cmake-venv/bin/pip" install 'cmake>=4,<5'
+          echo "$RUNNER_TEMP/cmake-venv/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/cmake-venv/bin/cmake" --version
+
+      # The Release build type defines STRIP_ASSERTIONS and STRIP_CUDA_CHECK, so
+      # use RelWithDebInfo to keep ASSERT and CUDA_CHECK active. 90-virtual
+      # embeds PTX only, which the simulator runs. The simulator needs a shared
+      # CUDA runtime.
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_CUDA_ARCHITECTURES=90-virtual \
+            -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared
+
+      # The NTT tests loop up to 2^27 or 2^28 elements, which is too slow on a
+      # simulated GPU. Cap the loops at 2^16 for this run (the expected MD5
+      # hashes are indexed by size, so the checks are unchanged).
+      - name: Cap the NTT test sizes
+        run: |
+          f=src/ulvt/ntt/tests/test_ntt.cu
+          sed -i \
+            -e 's/log_len <= 27/log_len <= 16/' \
+            -e 's/log_h <= 28/log_h <= 16/' \
+            -e 's/log_h <= 27/log_h <= 16/' \
+            -e 's/constexpr auto log_inp_len = 24;/constexpr auto log_inp_len = 16;/' \
+            "$f"
+          test "$(git diff --numstat -- "$f" | cut -f1)" = 4
+
+      - name: Build
+        run: cmake --build build --target ntt_tests finite_field_tests -j3
+
+      # Not run: sumcheck_test. Its smallest case (2^20 evaluations) did not finish on
+      # the simulated GPU within 30 minutes.
+      # Each suite is its own step, so a slow or failing one is easy to spot.
+      # A step fails on a missing device, a CUDA error, a failed assertion, a
+      # skipped test or a run that matched no tests, in addition to Catch2's own
+      # exit status. A wrong-architecture run can print a VirtualGPU error and
+      # still exit 0.
+      - name: Define the log check
+        run: |
+          cat > "$RUNNER_TEMP/check-log.sh" <<'SH'
+          log="$1"
+          if grep -Eiq 'VirtualGPU error|no device|no cuda|Capabilities Error|Cuda error at|Assertion failed|skipped|No test cases matched' "$log"; then
+            echo "::error::$log shows a device problem, an error or a skipped test"
+            exit 1
+          fi
+          grep -q 'All tests passed' "$log"
+          SH
+
+      - name: finite_field_tests
+        shell: bash
+        timeout-minutes: 30
+        run: |
+          vgpu run ./build/finite_field_tests --skip-benchmarks 2>&1 | tee ff.log
+          bash "$RUNNER_TEMP/check-log.sh" ff.log
+
+      - name: ntt_tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        timeout-minutes: 30
+        run: |
+          vgpu run ./build/ntt_tests "GPU capability check,NTTBB31 all input lengths,NTTBB31 round trip,Additive NTT r 0,Additive NTT r 2" 2>&1 | tee ntt.log
+          bash "$RUNNER_TEMP/check-log.sh" ntt.log
